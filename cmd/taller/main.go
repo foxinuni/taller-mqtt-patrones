@@ -23,7 +23,7 @@ func init() {
 	flag.IntVar(&CurrentNode, "node", 1, "Current node number")
 	flag.StringVar(&ImagePath, "image", "", "Path to the image file")
 	flag.StringVar(&BrokerURI, "broker", "test.mosquitto.org:1883", "MQTT broker URI")
-	flag.StringVar(&ClientID, "client", "go-pub-sub", "MQTT client ID")
+	flag.StringVar(&ClientID, "client", "gnode", "MQTT client ID")
 	flag.Parse()
 
 	if ImagePath == "" {
@@ -54,7 +54,7 @@ func main() {
 	fmt.Printf("Barcode: %s\n", barcode)
 
 	// Create a new MQTT client
-	client, err := internal.NewMqttClient(BrokerURI, ClientID)
+	client, err := internal.NewMqttClient(BrokerURI, fmt.Sprintf("%s-%d", ClientID, CurrentNode))
 	if err != nil {
 		fmt.Println("Failed to create a new MQTT client.")
 		panic(err)
