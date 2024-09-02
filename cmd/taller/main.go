@@ -1,16 +1,24 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"flag"
 	"fmt"
+	"image/jpeg"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/foxinuni/taller-mqtt-patrones/internal"
+	"github.com/sendgrid/sendgrid-go"
+	"github.com/sendgrid/sendgrid-go/helpers/mail"
 )
+
+const PADDING = 6
 
 var (
 	CurrentNode int
@@ -80,12 +88,12 @@ func main() {
 		}
 
 		// Publish the message to the topic
-		if err := client.Publish(topicForNode(nextNode), barcode); err != nil {
+		if err := client.Publish(topicForNode(nextNode), nextBarcode(barcode)); err != nil {
 			fmt.Println("Failed to publish the message.")
 			panic(err)
 		}
 
-		fmt.Printf("Message published to %d\n", nextNode)
+		fmt.Printf("Message published to %q\n", topicForNode(nextNode))
 	}
 
 	// Wait for the signal to exit
@@ -103,28 +111,79 @@ func handleTopic(_ context.Context, client *internal.MqttClient, message mqtt.Me
 	// Get next in line
 	nextNode, ok := nextInLine(payload, CurrentNode)
 	if !ok {
-		fmt.Println("Last node. Nothing to do.")
+		fmt.Println("Last node. Sending email.")
+		if err := sendEmail(CurrentNode, payload); err != nil {
+			fmt.Println("Failed to send email.")
+			panic(err)
+		}
+
 		return
 	}
 
 	// Publish the message to the next node
-	if err := client.Publish(topicForNode(nextNode), payload); err != nil {
+	fmt.Printf("Message published to %q\n", topicForNode(nextNode))
+	if err := client.Publish(topicForNode(nextNode), nextBarcode(payload)); err != nil {
 		fmt.Println("Failed to publish the message.")
 		panic(err)
 	}
 }
 
 func topicForNode(node int) string {
-	return fmt.Sprintf("PATRONES/%d", node)
+	return fmt.Sprintf("PATRONES2024/GRUPO%d", node)
 }
 
 func nextInLine(barcode string, node int) (int, bool) {
 	nodeStr := fmt.Sprintf("%d", node)
-	for i := 0; i < len(barcode)-1; i++ {
+	for i := 0; i < len(barcode)-PADDING-1; i++ {
 		if barcode[i] == nodeStr[0] {
 			return int(barcode[i+1] - '0'), true
 		}
 	}
 
 	return 0, false
+}
+
+// adds 1 the padding of the barcode
+func nextBarcode(barcode string) string {
+	padding := barcode[len(barcode)-PADDING:]
+	paddingInt, err := strconv.Atoi(padding)
+	if err != nil {
+		return ""
+	}
+
+	paddingInt++
+	return fmt.Sprintf("%s%0*d", barcode[:len(barcode)-PADDING], PADDING, paddingInt)
+}
+
+func sendEmail(node int, barcode string) error {
+	image, err := internal.GenerateBarcode(barcode)
+	if err != nil {
+		return err
+	}
+
+	buf := new(bytes.Buffer)
+	if err := jpeg.Encode(buf, image, nil); err != nil {
+		return err
+	}
+
+	encodedImage := base64.StdEncoding.EncodeToString(buf.Bytes())
+
+	from := mail.NewEmail(fmt.Sprintf("Grupo #%d", node), os.Getenv("SENDGRID_EMAIL"))
+	to := mail.NewEmail("Example User", os.Getenv("SENDGRID_RECEIVER"))
+	subject := fmt.Sprintf("Grupo #%d - mqtt barcode", node)
+	content := mail.NewContent("text/html", "<strong>A continuacion se muestra el codigo de barras</strong> <img src='cid:barcode' />")
+
+	attachment := mail.NewAttachment()
+	attachment.SetType("image/jpeg")
+	attachment.SetFilename("barcode.jpg")
+	attachment.SetContent(encodedImage)
+	attachment.SetDisposition("attachment")
+	attachment.SetContentID("barcode")
+
+	message := mail.NewV3MailInit(from, subject, to, content)
+	message.AddAttachment(attachment)
+
+	client := sendgrid.NewSendClient(os.Getenv("SENDGRID_API_KEY"))
+	_, err = client.Send(message)
+	return err
 }

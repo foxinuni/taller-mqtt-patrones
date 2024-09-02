@@ -36,3 +36,13 @@ func ParseBarcode(image image.Image) (string, error) {
 	code, _ := strings.CutPrefix(result.GetText(), "0")
 	return code, nil
 }
+
+func GenerateBarcode(code string) (*gozxing.BitMatrix, error) {
+	writer := oned.NewCode128Writer()
+	bmp, err := writer.Encode(code, gozxing.BarcodeFormat_CODE_128, 400, 200, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return bmp, nil
+}
